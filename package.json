@@ -1,0 +1,20 @@
+{
+  "name": "project-1-bknd",
+  "version": "1.0.0",
+  "description": "backend",
+  "homepage": "https://github.com/GDG-on-Campus-GCTC/project-1-bknd#readme",
+  "bugs": {
+    "url": "https://github.com/GDG-on-Campus-GCTC/project-1-bknd/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GDG-on-Campus-GCTC/project-1-bknd.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
