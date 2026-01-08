@@ -1,7 +1,9 @@
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const LocalStrategy = require('passport-local').Strategy;
 const User = require('../models/User');
 
+// Google OAuth Strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -32,13 +34,54 @@ passport.use(new GoogleStrategy({
                     displayName: profile.displayName,
                     email: email,
                     profilePic: profile.photos[0].value,
-                    domain: domain
+                    domain: domain,
+                    authMethod: 'google'
                 });
                 return done(null, user);
             }
         } catch (err) {
             console.error(err);
             return done(err, null);
+        }
+    }
+));
+
+// Local Strategy (Email/Password)
+passport.use(new LocalStrategy({
+    usernameField: 'email',
+    passwordField: 'password'
+},
+    async (email, password, done) => {
+        try {
+            // Find user by email
+            const user = await User.findOne({ email });
+
+            if (!user) {
+                return done(null, false, { message: 'Invalid email or password' });
+            }
+
+            // Check if user registered with Google
+            if (user.authMethod === 'google') {
+                return done(null, false, { message: 'This account uses Google authentication' });
+            }
+
+            // Verify password
+            const isMatch = await user.comparePassword(password);
+
+            if (!isMatch) {
+                return done(null, false, { message: 'Invalid email or password' });
+            }
+
+            // Verify domain
+            const domain = email.split('@')[1];
+            if (domain !== 'gcet.edu.in') {
+                return done(null, false, { message: 'Access restricted to gcet.edu.in domain only' });
+            }
+
+            return done(null, user);
+        } catch (err) {
+            console.error('Local strategy error:', err);
+            return done(err);
         }
     }
 ));

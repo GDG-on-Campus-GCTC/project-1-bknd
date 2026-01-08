@@ -110,12 +110,11 @@ app.use(passport.session());
 // --- Routes ---
 
 // Manual Authentication Routes (Email/Password)
-if (fs.existsSync(path.join(__dirname, 'src/routes/authRoutes.js'))) {
-    const authRoutes = require('./src/routes/authRoutes');
-    app.use('/auth', authRoutes);
-}
+const authRoutes = require('./src/routes/authRoutes');
+app.use('/auth', authRoutes);
 
-// 1. Trigger Google Login
+// Google OAuth Routes
+
 app.get('/auth/google',
     passport.authenticate('google', {
         scope: ['profile', 'email'],

@@ -1,5 +1,9 @@
 const User = require('../models/User');
 
+/**
+ * Register a new user with email and password
+ * Enforces @gcet.edu.in domain validation
+ */
 exports.register = async (req, res) => {
     try {
         const { email, password, displayName } = req.body;
@@ -82,6 +86,10 @@ exports.register = async (req, res) => {
     }
 };
 
+/**
+ * Login user with email and password
+ * Enforces @gcet.edu.in domain validation
+ */
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
