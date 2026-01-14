@@ -11,6 +11,8 @@ const http = require('http');
 const fs = require('fs');
 const { parse } = require('csv-parse');
 const path = require('path');
+const Message = require('./src/models/Message');
+
 
 const app = express();
 const server = http.createServer(app);
@@ -49,13 +51,44 @@ const loadQAData = () => {
 //csv loads when server starts
 loadQAData();
 
+// Middleware for Socket.io to access Express Session and Passport
+const sessionMiddleware = session({
+    secret: process.env.SESSION_SECRET || 'secret_key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+});
+
+app.use(sessionMiddleware);
+io.engine.use(sessionMiddleware);
+
+// Passport in Sockets
+io.use((socket, next) => {
+    const req = socket.request;
+    passport.initialize()(req, {}, () => {
+        passport.session()(req, {}, () => {
+            if (req.user) {
+                next();
+            } else {
+                // If not authenticated, we still allow connection but might restrict storage
+                next();
+            }
+        });
+    });
+});
+
 // Socket.io connection logic
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
+    const user = socket.request.user;
 
-    socket.on('send_message', (data) => {
+    socket.on('send_message', async (data) => {
         console.log('Message received:', data);
-        const userQuestion = data.content.toLowerCase().trim();
+        const { content, chatId } = data; // chatId is optional from frontend
+        const userQuestion = content.toLowerCase().trim();
 
         // Finding answer in CSV
         const match = qaData.find(item =>
@@ -67,10 +100,35 @@ io.on('connection', (socket) => {
             ? match.answer
             : "I'm sorry, I don't have an answer for that..";
 
-        // Emit response back to the client
+        let currentChatId = chatId;
+
+        if (user && chatId) {
+            try {
+                // Find the chat and check how many messages it has
+                const chat = await Message.findById(chatId);
+
+                if (chat) {
+                    const updateData = {
+                        $push: { history: { question: content, answer: response } }
+                    };
+
+                    // If it's the first message, update the title too
+                    if (chat.history.length === 0) {
+                        updateData.title = content.substring(0, 30);
+                    }
+
+                    await Message.findByIdAndUpdate(chatId, updateData);
+                }
+            } catch (err) {
+                console.error('Error saving message:', err);
+            }
+        }
+
+        // Emit response + the currentChatId (so frontend knows which chat this belongs to)
         socket.emit('receive_message', {
             content: response,
             role: 'assistant',
+            chatId: currentChatId,
             time: new Date().toISOString()
         });
     });
@@ -85,7 +143,7 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Middleware
+// Middleware and Passport are handled above for shared session support
 app.use(morgan('dev'));
 app.use(cors({
     origin: 'http://localhost:5173',
@@ -93,15 +151,6 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 app.use(express.json());
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'secret_key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-}));
 
 // Initialize Passport
 app.use(passport.initialize());
@@ -111,7 +160,9 @@ app.use(passport.session());
 
 // Manual Authentication Routes (Email/Password)
 const authRoutes = require('./src/routes/authRoutes');
+const chatRoutes = require('./src/routes/chatRoutes');
 app.use('/auth', authRoutes);
+app.use('/chat', chatRoutes);
 
 // Google OAuth Routes
 
