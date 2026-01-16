@@ -36,7 +36,10 @@ const io = new Server(server, {
 
 // Socket.io authentication middleware
 io.use((socket, next) => {
-    sessionMiddleware(socket.request, {}, () => {
+    sessionMiddleware(socket.request, {}, (err) => {
+        if (err) {
+            return next(new Error('Session error: ' + err.message));
+        }
         if (socket.request.session && socket.request.session.passport && socket.request.session.passport.user) {
             next();
         } else {
@@ -98,8 +101,9 @@ io.on('connection', (socket) => {
         // Finding answer in CSV
         // 1. Prefer exact match
         let match = qaData.find(item => {
-            if (!item.question) return false;
-            return item.question.toLowerCase().trim() === userQuestion;
+            const normalizedQuestion = (item.question || '').toLowerCase().trim();
+            if (!normalizedQuestion) return false;
+            return normalizedQuestion === userQuestion;
         });
 
         // 2. If no exact match, fall back to the most specific partial match
