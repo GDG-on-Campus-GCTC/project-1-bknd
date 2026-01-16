@@ -14,12 +14,38 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+
+// Session configuration (moved before Socket.io setup for reuse)
+const sessionMiddleware = session({
+    secret: process.env.SESSION_SECRET || 'secret_key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+});
+
 const io = new Server(server, {
     cors: {
-        origin: 'http://localhost:5173',
+        origin: process.env.SOCKET_IO_CORS_ORIGIN || 'http://localhost:5173',
         methods: ['GET', 'POST'],
         credentials: true
     }
+});
+
+// Socket.io authentication middleware
+io.use((socket, next) => {
+    sessionMiddleware(socket.request, {}, (err) => {
+        if (err) {
+            return next(new Error('Session error: ' + err.message));
+        }
+        if (socket.request.session && socket.request.session.passport && socket.request.session.passport.user) {
+            next();
+        } else {
+            next(new Error('Unauthorized: Please log in to use the chat.'));
+        }
+    });
 });
 
 //for storing question and answers
@@ -29,8 +55,11 @@ const loadQAData = () => {
     qaData = [];
     //check if questions.csv exists
     if (fs.existsSync(path.join(__dirname, 'questions.csv'))) {
-        //csv can be very large so we use strams it breaks data into small pieces
+        //csv can be very large so we use streams; it breaks data into small pieces
         fs.createReadStream(path.join(__dirname, 'questions.csv'))
+            .on('error', (err) => {
+                console.error('Error reading CSV file:', err);
+            })
             //pipe and parse means we are separating csv file by comma like hello?I am assistant
             .pipe(parse({ columns: true, trim: true }))
             .on('data', (row) => {
@@ -55,17 +84,49 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', (data) => {
         console.log('Message received:', data);
+
+        // Validate incoming data before accessing data.content
+        if (!data || typeof data.content !== 'string') {
+            console.warn('Invalid message format received:', data);
+            socket.emit('receive_message', {
+                content: "Invalid message format.",
+                role: 'assistant',
+                time: new Date().toISOString()
+            });
+            return;
+        }
+
         const userQuestion = data.content.toLowerCase().trim();
 
         // Finding answer in CSV
-        const match = qaData.find(item =>
-            item.question.toLowerCase().trim() === userQuestion ||
-            userQuestion.includes(item.question.toLowerCase().trim())
-        );
+        // 1. Prefer exact match
+        let match = qaData.find(item => {
+            const normalizedQuestion = (item.question || '').toLowerCase().trim();
+            if (!normalizedQuestion) return false;
+            return normalizedQuestion === userQuestion;
+        });
+
+        // 2. If no exact match, fall back to the most specific partial match
+        if (!match) {
+            const candidates = qaData
+                .map(item => {
+                    const normalizedQuestion = (item.question || '').toLowerCase().trim();
+                    return { item, normalizedQuestion };
+                })
+                .filter(entry =>
+                    entry.normalizedQuestion &&
+                    userQuestion.includes(entry.normalizedQuestion)
+                )
+                .sort((a, b) => b.normalizedQuestion.length - a.normalizedQuestion.length);
+
+            if (candidates.length > 0) {
+                match = candidates[0].item;
+            }
+        }
 
         const response = match
             ? match.answer
-            : "I'm sorry, I don't have an answer for that..";
+            : "I'm sorry, I don't have an answer for that.";
 
         // Emit response back to the client
         socket.emit('receive_message', {
@@ -93,15 +154,7 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 }));
 app.use(express.json());
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'secret_key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-}));
+app.use(sessionMiddleware);
 
 // Initialize Passport
 app.use(passport.initialize());
