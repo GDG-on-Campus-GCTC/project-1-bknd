@@ -80,17 +80,7 @@ const loadQAData = () => {
 //csv loads when server starts
 loadQAData();
 
-// Middleware for Socket.io to access Express Session and Passport
-const sessionMiddleware = session({
-    secret: process.env.SESSION_SECRET || 'secret_key',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-});
-
+// Middleware for Express to access Session and Passport
 app.use(sessionMiddleware);
 io.engine.use(sessionMiddleware);
 
