@@ -7,6 +7,14 @@ exports.createChat = async (req, res) => {
             return res.status(401).json({ message: 'Unauthorized' });
         }
 
+        // Check if the user has reached the limit of 5 chats
+        const chatCount = await Message.countDocuments({ userId: req.user._id });
+        if (chatCount >= 5) {
+            return res.status(403).json({
+                message: 'Chat limit reached. You can only have up to 5 chats. Please delete an existing chat to create a new one.'
+            });
+        }
+
         const newChat = await Message.create({
             userId: req.user._id,
             title: 'New Chat',
