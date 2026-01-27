@@ -106,7 +106,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
         console.log('Message received:', data);
-
+        const { content, chatId } = data;
         // Validate incoming data before accessing data.content
         if (!data || typeof data.content !== 'string') {
             console.warn('Invalid message format received:', data);
@@ -152,10 +152,10 @@ io.on('connection', (socket) => {
 
         let currentChatId = chatId;
 
-        if (user && chatId) {
+        if (user && currentChatId) {
             try {
                 // Find the chat and check how many messages it has
-                const chat = await Message.findById(chatId);
+                const chat = await Message.findById(currentChatId);
 
                 if (chat) {
                     const updateData = {
@@ -167,7 +167,7 @@ io.on('connection', (socket) => {
                         updateData.title = content.substring(0, 30);
                     }
 
-                    await Message.findByIdAndUpdate(chatId, updateData);
+                    await Message.findByIdAndUpdate(currentChatId, updateData);
                 }
             } catch (err) {
                 console.error('Error saving message:', err);
