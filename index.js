@@ -13,6 +13,11 @@ const { parse } = require('csv-parse');
 const path = require('path');
 const Message = require('./src/models/Message');
 
+// Import new services
+const googleAgentService = require('./src/services/googleAgentService');
+const configService = require('./src/services/configService');
+const analyticsService = require('./src/services/analyticsService');
+
 
 const app = express();
 const server = http.createServer(app);
@@ -106,7 +111,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
         console.log('Message received:', data);
-
+        const { content, chatId } = data;
         // Validate incoming data before accessing data.content
         if (!data || typeof data.content !== 'string') {
             console.warn('Invalid message format received:', data);
@@ -119,8 +124,9 @@ io.on('connection', (socket) => {
         }
 
         const userQuestion = data.content.toLowerCase().trim();
+        let currentChatId = chatId; // Define currentChatId early
 
-        // Finding answer in CSV
+        // Step 1: CSV Search (Priority)
         // 1. Prefer exact match
         let match = qaData.find(item => {
             const normalizedQuestion = (item.question || '').toLowerCase().trim();
@@ -146,20 +152,68 @@ io.on('connection', (socket) => {
             }
         }
 
-        const response = match
-            ? match.answer
-            : "I'm sorry, I don't have an answer for that.";
+        let response, responseSource, responseMetadata = {};
+        const startTime = Date.now();
 
-        let currentChatId = chatId;
+        // Step 2: Determine Response Source
+        if (match) {
+            // CSV Match Found
+            response = match.answer;
+            responseSource = 'csv';
+            console.log('📋 CSV match found for:', userQuestion.substring(0, 30));
+        } else {
+            // Step 3: AI Fallback
+            console.log('🤖 No CSV match, trying AI fallback for:', userQuestion.substring(0, 30));
+            
+            try {
+                const aiResponse = await googleAgentService.queryAgent(
+                    data.content, // Use original content, not lowercased
+                    currentChatId,
+                    user?._id || socket.id
+                );
+                
+                response = aiResponse.content;
+                responseSource = aiResponse.source;
+                responseMetadata = {
+                    confidence: aiResponse.confidence,
+                    intent: aiResponse.intent,
+                    error: aiResponse.error
+                };
+                
+                console.log(`✅ AI Response (${aiResponse.source}):`, response.substring(0, 50) + '...');
+            } catch (error) {
+                console.error('❌ AI Service Error:', error.message);
+                response = "I'm sorry, I'm having trouble processing your request right now. Please try again later.";
+                responseSource = 'error';
+                responseMetadata = { error: error.message };
+            }
+        }
 
-        if (user && chatId) {
+        // Record analytics (without storing in database)
+        const responseTime = Date.now() - startTime;
+        analyticsService.recordResponse(responseSource, responseTime, responseMetadata);
+
+        // Step 4: Apply Response Length Limit
+        const maxLength = configService.getMaxResponseLength();
+        if (response.length > maxLength) {
+            response = response.substring(0, maxLength - 3) + '...';
+        }
+
+        // Step 5: Save to Database (without source/metadata)
+        if (user && currentChatId) {
             try {
                 // Find the chat and check how many messages it has
-                const chat = await Message.findById(chatId);
+                const chat = await Message.findById(currentChatId);
 
                 if (chat) {
+                    const historyEntry = {
+                        question: content,
+                        answer: response,
+                        timestamp: new Date()
+                    };
+
                     const updateData = {
-                        $push: { history: { question: content, answer: response } }
+                        $push: { history: historyEntry }
                     };
 
                     // If it's the first message, update the title too
@@ -167,20 +221,27 @@ io.on('connection', (socket) => {
                         updateData.title = content.substring(0, 30);
                     }
 
-                    await Message.findByIdAndUpdate(chatId, updateData);
+                    await Message.findByIdAndUpdate(currentChatId, updateData);
+                    
+                    // Log source info for monitoring (not stored in DB)
+                    console.log(`💾 Saved message from source: ${responseSource}`);
                 }
             } catch (err) {
                 console.error('Error saving message:', err);
             }
         }
 
-        // Emit response + the currentChatId (so frontend knows which chat this belongs to)
-        socket.emit('receive_message', {
+        // Step 6: Emit Enhanced Response
+        const responsePayload = {
             content: response,
             role: 'assistant',
             chatId: currentChatId,
             time: new Date().toISOString()
-        });
+        };
+
+        // Don't include source information to keep it clean
+        
+        socket.emit('receive_message', responsePayload);
     });
 
     socket.on('disconnect', () => {
@@ -214,6 +275,43 @@ const authRoutes = require('./src/routes/authRoutes');
 const chatRoutes = require('./src/routes/chatRoutes');
 app.use('/auth', authRoutes);
 app.use('/chat', chatRoutes);
+
+// AI Service Health Check and Stats Routes
+app.get('/api/ai/health', async (req, res) => {
+    try {
+        const healthStatus = await googleAgentService.healthCheck();
+        res.json(healthStatus);
+    } catch (error) {
+        res.status(500).json({ status: 'error', message: error.message });
+    }
+});
+
+app.get('/api/ai/stats', (req, res) => {
+    try {
+        const stats = googleAgentService.getStats();
+        res.json(stats);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Analytics endpoint for usage statistics
+app.get('/api/analytics', (req, res) => {
+    try {
+        const analytics = analyticsService.getStats();
+        res.json(analytics);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Configuration endpoint (useful for debugging)
+app.get('/api/config', (req, res) => {
+    if (process.env.NODE_ENV !== 'development') {
+        return res.status(403).json({ error: 'Not available in production' });
+    }
+    res.json(configService.getAll());
+});
 
 // Google OAuth Routes
 

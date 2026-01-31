@@ -17,21 +17,30 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "ai:health": "curl -s http://localhost:3000/api/ai/health | json_pp",
+    "ai:stats": "curl -s http://localhost:3000/api/ai/stats | json_pp",
+    "analytics": "curl -s http://localhost:3000/api/analytics | json_pp",
+    "setup:env": "cp .env.example .env && echo '✅ Environment file created. Please update with your credentials.'",
+    "verify:setup": "node -e \"console.log('🔍 Verifying setup...'); require('./src/services/googleAgentService').healthCheck().then(r => console.log('✅ Setup verification:', r)).catch(e => console.log('❌ Setup issue:', e.message))\""
   },
   "dependencies": {
+    "@google-cloud/aiplatform": "^6.2.0",
+    "@google-cloud/storage": "^7.18.0",
+    "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "csv-parse": "^6.1.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
+    "markdown-it": "^14.1.0",
     "mongoose": "^9.0.2",
     "morgan": "^1.10.1",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
-    "socket.io": "^4.8.3",
-    "passport-local": "^1.0.0"
+    "passport-local": "^1.0.0",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
