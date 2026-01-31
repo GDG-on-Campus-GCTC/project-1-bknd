@@ -12,6 +12,8 @@ const fs = require('fs');
 const { parse } = require('csv-parse');
 const path = require('path');
 const Message = require('./src/models/Message');
+const axios = require('axios');
+
 
 
 const app = express();
@@ -106,6 +108,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (data) => {
         console.log('Message received:', data);
+        const { content, chatId } = data; // Added destructuring
 
         // Validate incoming data before accessing data.content
         if (!data || typeof data.content !== 'string') {
@@ -118,7 +121,7 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const userQuestion = data.content.toLowerCase().trim();
+        const userQuestion = content.toLowerCase().trim();
 
         // Finding answer in CSV
         // 1. Prefer exact match
@@ -146,9 +149,19 @@ io.on('connection', (socket) => {
             }
         }
 
-        const response = match
-            ? match.answer
-            : "I'm sorry, I don't have an answer for that.";
+        let response = match ? match.answer : null;
+        if (!response) {
+            try {
+                const pythonApiUrl = process.env.PYTHON_API_URL || 'http://localhost:8000/chat';
+                const aiResponse = await axios.post(pythonApiUrl, {
+                    message: content
+                });
+                response = aiResponse.data.response;
+            } catch (err) {
+                console.error('Error calling Python api:', err.message);
+                response = "Error while connecting api pls check it";
+            }
+        }
 
         let currentChatId = chatId;
 

@@ -123,3 +123,9 @@ dist
 *.swo
 .DS_Store
 Thumbs.db
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
