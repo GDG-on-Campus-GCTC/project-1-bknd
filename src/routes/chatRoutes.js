@@ -19,6 +19,9 @@ router.get('/list', ensureAuthenticated, chatController.getChatList);
 // Get the full history of a SPECIFIC chat session
 router.get('/history/:chatId', ensureAuthenticated, chatController.getChatHistory);
 
+// Stream a chat response from Python API
+router.post('/stream', ensureAuthenticated, chatController.streamChat);
+
 router.delete('/delete/:chatId', ensureAuthenticated, chatController.deleteChat);
 router.delete('/clear-all', ensureAuthenticated, chatController.clearChatHistory);
 

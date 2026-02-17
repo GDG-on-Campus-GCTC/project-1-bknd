@@ -12,6 +12,7 @@ const fs = require('fs');
 const { parse } = require('csv-parse');
 const path = require('path');
 const Message = require('./src/models/Message');
+const redisService = require('./src/services/redisService');
 
 
 const app = express();
@@ -118,7 +119,8 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const userQuestion = data.content.toLowerCase().trim();
+        const { content, chatId } = data; // Destructure here
+        const userQuestion = content.toLowerCase().trim();
 
         // Finding answer in CSV
         // 1. Prefer exact match
@@ -188,11 +190,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Database Connection
-mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('MongoDB connection error:', err));
-
 // Middleware and Passport are handled above for shared session support
 app.use(morgan('dev'));
 app.use(cors({
@@ -255,6 +252,36 @@ app.get('/login-failure', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+
+// Initialize services and start server
+async function startServer() {
+    try {
+        // Connect to MongoDB
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log('✅ Connected to MongoDB');
+
+        // Connect to Redis
+        await redisService.connect();
+        console.log('✅ Connected to Redis');
+
+        // Start server
+        server.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
+        });
+
+    } catch (error) {
+        console.error('❌ Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('\n🛑 Shutting down gracefully...');
+    await redisService.disconnect();
+    await mongoose.connection.close();
+    process.exit(0);
 });
+
+// Start the server
+startServer();

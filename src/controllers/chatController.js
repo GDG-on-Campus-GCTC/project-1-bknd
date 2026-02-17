@@ -1,4 +1,5 @@
 const Message = require('../models/Message');
+const redisService = require('../services/redisService');
 
 // Create a brand new empty chat row
 exports.createChat = async (req, res) => {
@@ -95,4 +96,130 @@ exports.clearChatHistory = async (req, res) => {
         console.error('Error clearing chat history:', error);
         res.status(500).json({ message: 'Server error' });
     }
+};
+
+// Stream Chat Response via Redis Pub/Sub
+exports.streamChat = async (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { question, chatId, mode } = req.body;
+
+    if (!question || !chatId) {
+        return res.status(400).json({ message: 'Missing question or chatId' });
+    }
+
+    // Check Redis connection
+    if (!redisService.checkConnection()) {
+        return res.status(503).json({ message: 'Redis service unavailable' });
+    }
+
+    // Set headers for streaming response to frontend
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    let fullAnswer = '';
+    const responseChannel = `aiml:responses:${chatId}`;
+    let isSubscribed = false;
+
+    try {
+        // Subscribe to response channel BEFORE publishing request
+        await redisService.subscribe(responseChannel, async (message) => {
+            try {
+                const { token, done, error } = message;
+
+                if (error) {
+                    console.error('Error from AIML service:', error);
+                    if (!res.headersSent) {
+                        res.status(500).json({ message: error });
+                    } else {
+                        res.end();
+                    }
+                    await redisService.unsubscribe(responseChannel);
+                    return;
+                }
+
+                if (done) {
+                    console.log('✅ Streaming complete. Full answer length:', fullAnswer.length);
+
+                    // End the response stream
+                    res.end();
+
+                    // Save to Database
+                    try {
+                        const chat = await Message.findOne({ _id: chatId, userId: req.user._id });
+                        if (chat) {
+                            const updateData = {
+                                $push: { history: { question: question, answer: fullAnswer } }
+                            };
+
+                            // If it's the first message, update the title too
+                            if (chat.history.length === 0) {
+                                updateData.title = question.substring(0, 30);
+                            }
+
+                            await Message.findByIdAndUpdate(chatId, updateData);
+                            console.log('💾 Chat history saved to database');
+                        }
+                    } catch (dbError) {
+                        console.error('Error saving chat history:', dbError);
+                    }
+
+                    // Unsubscribe from channel
+                    await redisService.unsubscribe(responseChannel);
+                    return;
+                }
+
+                // Stream token to frontend
+                if (token) {
+                    fullAnswer += token;
+                    res.write(token);
+                    if (res.flush) res.flush(); // Force send immediately
+                }
+            } catch (err) {
+                console.error('Error processing message:', err);
+            }
+        });
+
+        isSubscribed = true;
+        console.log('✅ Subscription established, waiting for confirmation...');
+
+        // CRITICAL: Add small delay to ensure subscription is fully established
+        // Redis subscribe() is async but may not be immediately ready to receive messages
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Publish request to AIML service
+        const requestPayload = {
+            chatId: chatId,
+            question: question,
+            mode: mode || 'lite',
+            current_year: 2026,
+            timestamp: new Date().toISOString()
+        };
+
+        await redisService.publish('aiml:requests', requestPayload);
+        console.log('📤 Published request to AIML service');
+
+    } catch (error) {
+        console.error('Error in streamChat:', error);
+
+        if (isSubscribed) {
+            await redisService.unsubscribe(responseChannel);
+        }
+
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Internal Server Error' });
+        } else {
+            res.end();
+        }
+    }
+
+    // Handle client disconnect
+    req.on('close', async () => {
+        console.log('Client disconnected, cleaning up subscription');
+        if (isSubscribed) {
+            await redisService.unsubscribe(responseChannel);
+        }
+    });
 };
